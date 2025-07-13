@@ -1,0 +1,6 @@
+cryptography==44.0.2
+boto3==1.37.20
+mlflow==2.22.0
+pandas==2.1.4
+psycopg2==2.9.10
+mlflow[auth]

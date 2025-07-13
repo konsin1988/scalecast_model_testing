@@ -1,0 +1,187 @@
+services:
+  streamlit:
+      platform: linux/amd64
+      build: 
+        context: .
+        dockerfile: docker/streamlit/Dockerfile
+      image: streamlit-main:latest
+      container_name: scalecast-streamlit
+      command: streamlit run Main.py --server.port 8513 --server.address 0.0.0.0 
+      volumes:
+       - ./streamlit:/streamlit
+      ports:
+            - 8513:8513
+      depends_on:
+        fastapi:
+          condition: service_healthy
+          restart: true
+      networks:
+        - scalecast-network
+
+  fastapi:
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: docker/fastapi/Dockerfile
+    container_name: scalecast-fastapi
+    ports:
+      - 8000:8000
+    image: scalecast-fastapi:latest
+    volumes:
+      - ./fastapi/:/fastapi/
+    environment:
+      - MINIO_ACCESS_KEY=${MINIO_ROOT_USER}
+      - MINIO_SECRET_KEY=${MINIO_ROOT_PASSWORD}
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+    healthcheck:
+      test: curl --fail http://localhost:8000/health || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      s3:
+        condition: service_healthy
+        restart: true
+    networks:
+      - scalecast-network
+
+  mlflow:
+    platform: linux/amd64
+    restart: always
+    build: 
+      context: .
+      dockerfile: docker/mlflow/Dockerfile
+    image: mlflow-base:latest
+    container_name: scalecast-mlflow
+    depends_on:
+      s3:
+        condition: service_healthy
+        restart: true
+      db:
+        condition: service_healthy
+        restart: true
+      init:
+        condition: service_completed_successfully
+        restart: true
+    ports:
+        - 5000:5000
+    volumes:
+        - ./mlflow:/mlflow
+    environment:
+        - MLFLOW_S3_ENDPOINT_URL=http://s3:9099/
+        - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+        - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+        - MLFLOW_TRACKING_USERNAME=${MLFLOW_TRACKING_USERNAME}
+        - MLFLOW_TRACKING_PASSWORD=${MLFLOW_TRACKING_PASSWORD}
+    command: mlflow server --backend-store-uri postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${MLFLOW_DB_NAME} --default-artifact-root s3://mlflow --serve-artifacts --host 0.0.0.0
+    networks:
+        - scalecast-network
+        # --artifacts-destination s3://mlflow
+
+  s3:
+    image: minio/minio:latest
+    container_name: scalecast-s3
+    ports:
+      - "9000:9000"
+      - "9099:9099"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ROOT_USER}
+      - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
+    volumes:
+      - ./minio:/data
+    command: server --address ":9099" --console-address ":9000" /data
+    restart: always # necessary since it's failing to start sometimes
+    healthcheck:
+      test: curl -I http://localhost:9000/minio/health/live || exit 1
+      interval: 10s
+      timeout: 10s
+      retries: 3  
+    networks:
+    - scalecast-network
+
+  # db:
+  #   image: clickhouse:latest
+  #   platform: linux/amd64
+  #   container_name: cp-clickhouse 
+  #   ulimits:
+  #     nofile:
+  #       soft: 262144
+  #       hard: 262144
+  #   ports:
+  #     - 8123:8123
+  #   environment:
+  #     - CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1
+  #   volumes:
+  #     - ./clickhouse/data:/var/lib/clickhouse/
+  #     - ./clickhouse/logs:/var/log/clickhouse-server/
+  #     - ./clickhouse/config/:/etc/clickhouse-server/config/
+  #     - ./clickhouse/users/:/etc/clickhouse-server/users.d/
+  #     - ./clickhouse/csv:/var/lib/csv/
+  #   cap_add:
+  #     - SYS_NICE
+  #     - NET_ADMIN
+  #     - IPC_LOCK
+  #     - SYS_PTRACE
+  #   healthcheck:
+  #     test: wget --no-verbose --tries=1 http://127.0.0.1:8123/ping || exit 1
+  #     interval: 10s
+  #     timeout: 10s
+  #     retries: 3
+  #   networks:
+  #     - cp-network
+
+  init:
+    image: init_db:latest
+    build:
+      context: .
+      dockerfile: ./docker/init/Dockerfile
+    container_name: init_db
+    volumes:
+      - ./data/:/data/
+    environment:
+      - DB_NAME=${DB_NAME}
+      - DB_USER=${DB_USER}
+      - DB_PASSWORD=${DB_PASSWORD}
+      - DB_HOST=${DB_HOST}
+      - DB_PORT=${DB_PORT}
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    networks:
+      - scalecast-network
+
+  db:
+    image: postgres:13
+    platform: linux/amd64
+    container_name: scalecast-postgres
+    ports:
+      - 5432:5432
+    environment:
+      - POSTGRES_DB=${DB_NAME}
+      - POSTGRES_USER=${DB_USER}
+      - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_HOST=${DB_HOST}
+      - POSTGRES_PORT=${DB_PORT}
+    volumes:
+      - ./postgres/pg-data:/var/lib/postgresql/data
+    cap_add:
+      - SYS_NICE
+      - NET_ADMIN
+      - IPC_LOCK
+      - SYS_PTRACE
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - scalecast-network
+
+networks:
+  scalecast-network:
+    name: scalecast-network
