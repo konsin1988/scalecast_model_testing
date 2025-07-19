@@ -1,22 +1,22 @@
 services:
   streamlit:
-      platform: linux/amd64
-      build: 
-        context: .
-        dockerfile: docker/streamlit/Dockerfile
-      image: streamlit-main:latest
-      container_name: scalecast-streamlit
-      command: streamlit run Main.py --server.port 8513 --server.address 0.0.0.0 
-      volumes:
-       - ./streamlit:/streamlit
-      ports:
+    platform: linux/amd64
+    build: 
+      context: .
+      dockerfile: docker/streamlit/Dockerfile
+    image: streamlit-main:latest
+    container_name: scalecast-streamlit
+    command: streamlit run Main.py --server.port 8513 --server.address 0.0.0.0 
+    volumes:
+      - ./streamlit:/streamlit
+    ports:
             - 8513:8513
-      depends_on:
-        fastapi:
-          condition: service_healthy
-          restart: true
-      networks:
-        - scalecast-network
+    depends_on:
+      fastapi:
+        condition: service_healthy
+        restart: true
+    networks:
+      - scalecast-network
 
   fastapi:
     platform: linux/amd64
@@ -37,6 +37,10 @@ services:
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_HOST=${DB_HOST}
       - DB_PORT=${DB_PORT}
+      - REDIS_HOST=${REDIS_HOST}
+      - REDIS_PORT=${REDIS_PORT}
+      - REDIS_USER=${REDIS_USER}
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
     healthcheck:
       test: curl --fail http://localhost:8000/health || exit 1
       interval: 10s
@@ -44,6 +48,15 @@ services:
       retries: 3
     depends_on:
       s3:
+        condition: service_healthy
+        restart: true
+      db:
+        condition: service_healthy
+        restart: true
+      init:
+        condition: service_completed_successfully
+        restart: true
+      redis:
         condition: service_healthy
         restart: true
     networks:
@@ -133,6 +146,48 @@ services:
   #     retries: 3
   #   networks:
   #     - cp-network
+
+  redis:
+    image: redis:latest
+    container_name: scalecast-redis
+    volumes:
+      - ./redis/data/:/data/
+      - ./redis/redis.conf:/etc/redis/redis.conf
+    ports:
+      - 6379:6379
+    environment:
+      - REDIS_PASSWORD=${REDIS_PASSWORD}
+      - REDIS_USER=${REDIS_USER}
+    deploy:
+      resources:
+        limits:
+          cpus: '0.50'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+    command: >
+      sh -c '
+        echo "bind 0.0.0.0" > /etc/redis/redis.conf &&
+        echo "requirepass $REDIS_PASSWORD" >> /etc/redis/redis.conf &&
+        echo "appendonly yes" >> /etc/redis/redis.conf &&
+        echo "appendfsync everysec" >> /etc/redis/redis.conf &&
+        echo "user default on nopass ~* +@all" > /etc/redis/users.acl &&
+        echo "user $REDIS_USER on >$REDIS_PASSWORD ~* +@all" >> /etc/redis/users.acl &&
+        redis-server /etc/redis/redis.conf --aclfile /etc/redis/users.acl
+      '
+    depends_on:
+      db:
+        condition: service_healthy
+        restart: true
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "$REDIS_PASSWORD", "ping"]
+      interval: 3s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - scalecast-network
 
   init:
     image: init_db:latest

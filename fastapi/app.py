@@ -12,14 +12,14 @@ app = FastAPI()
 def heathcheck():
     return {"status": "healthy"}
 
-@app.get('/dfhead')
+@app.get('/dfhead/{dname}')
 async def get_dfhead(dname: str | None = None):
     return  analyser.get_dfhead(dname)
 
-@app.get('/main_plot')
+@app.get('/main_plot/{dname}')
 async def get_main_plot(dname: str | None = None):
-    return Response(content=analyser.get_main_plot(dname).getvalue(), media_type="image/png")
+    return Response(content=analyser.get_main_plot(dname, 'main'), media_type="image/png")
 
-@app.get('/seasonal_decompose')
+@app.get('/seasonal_decompose/{dname}')
 async def get_seasonal_decompose_plot(dname: str | None = None):
-    return Response(content=analyser.get_seasonal_decompose_plot(dname).getvalue(), media_type="image/png")
+    return Response(content=analyser.get_seasonal_decompose_plot(dname, 'seasonal'), media_type="image/png")

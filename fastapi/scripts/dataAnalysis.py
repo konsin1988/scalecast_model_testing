@@ -4,9 +4,10 @@ from pandas.plotting import lag_plot
 import numpy as np
 
 from sqlalchemy import create_engine, text
+import redis, json
 from dotenv import load_dotenv
 import os
-from io import BytesIO
+from io import BytesIO, StringIO
 
 import matplotlib.pyplot as plt
 
@@ -20,8 +21,7 @@ from statsmodels.tsa.seasonal import seasonal_decompose
 
 class DataAnalysis:
     def __init__(self):
-        self.__set_engine()
-        self.__set_data()
+        self.__set_engine_n_redis()
         self.__set_forecasters()
         self.__dataset_dict = {"co2": "CO2 amount", 
                 "air_passengers": "Air passengers",
@@ -35,26 +35,56 @@ class DataAnalysis:
                 "password": os.getenv("DB_PASSWORD"),
                 "host": os.getenv("DB_HOST"),
                 "port": os.getenv("DB_PORT"),
-                "database": os.getenv("DB_NAME")}
+                "database": os.getenv("DB_NAME"),
+                "redis_user": os.getenv("REDIS_USER"),
+                "redis_password": os.getenv("REDIS_PASSWORD"),
+                "redis_host": os.getenv("REDIS_HOST"),
+                "redis_port": os.getenv("REDIS_PORT")
+                }
 
-    def __set_engine(self):
+    def __set_engine_n_redis(self):
         EV = self.__get_environ()
         self.__engine = create_engine(f"postgresql+psycopg2://{EV['user']}:{EV['password']}@{EV['host']}:{EV['port']}/{EV['database']}")
+        self.__redis = redis.from_url(f"redis://{EV['redis_user']}:{EV['redis_password']}@{EV['redis_host']}:{EV['redis_port']}/0")
 
-    def __get_list_tables(self):
-        query = text("select tablename from pg_catalog.pg_tables where schemaname='public';")
-        return pd.read_sql_query(query, self.__engine)['tablename'].to_list()
+    def cache_df(func):
+        def wrapper(self, t_name):
+            res = self.__redis.get(t_name)
+            if res is None: 
+                res = func(self, t_name)
+                csv_buffer = StringIO()
+                res.to_csv(csv_buffer, index=False)
+                self.__redis.set(t_name, csv_buffer.getvalue())
+            else:
+                res = pd.read_csv(StringIO(res.decode('utf-8')))
+            return res
+        return wrapper
+    
+    def cache_plot(func):
+        def wrapper(self, t_name, plot_name):
+            result = result = self.__redis.get(f'{t_name}-{plot_name}')
+            if result is None:
+                fig = func(self, t_name, plot_name)
+                img_buf = BytesIO()
+                plt.savefig(img_buf, format='png')
+                plt.close(fig)
+                self.__redis.set(f'{t_name}-{plot_name}', img_buf.getvalue())
+                result = img_buf.getvalue()
+            else:
+                result = self.__redis.get(f'{t_name}-{plot_name}')
+            return result
+        return wrapper
 
-    def __set_data(self):
-        tables = []
-        table_list = self.__get_list_tables()
-        for t_name in table_list:
-            query = text(f'select * from {t_name}')
-            tables.append(pd.read_sql_query(query, self.__engine))
-        self.__data = dict(zip(table_list, tables))
+    @cache_df
+    def __get_data(self, t_name):
+        query = text(f'select * from {t_name}')
+        return pd.read_sql_query(query, self.__engine)
 
     def __get_forecaster(self, t_name, future_dates, test_length):
-        data = self.__data[t_name].set_index('date')
+        data = (
+            self.__get_data(t_name)
+            .set_index('date')
+        )
         return Forecaster(
             y = data.iloc[:,0],
             current_dates=data.index,
@@ -73,30 +103,22 @@ class DataAnalysis:
         }
 
     def get_dfhead(self, t_name):
-        df = self.__data[t_name].head()
+        df = self.__get_data(t_name).head()
         return dict(zip(df.columns, [df[x].to_list() for x in df.columns]))
-    
-    def get_main_plot(self, t_name):
+
+    @cache_plot
+    def get_main_plot(self, t_name, plot_name):
         fig, ax = plt.subplots(1, 1, figsize=(10, 5), dpi=120)
         self.__fs[t_name].plot()
         plt.title(f"{self.__dataset_dict[t_name]}", size=18)
-
-        img_buf = BytesIO()
-        plt.savefig(img_buf, format='png')
-        plt.close(fig) 
-        img_buf.seek(0)
-        return img_buf  
+        return fig
     
-    def get_seasonal_decompose_plot(self, t_name):
-        fig = plt.figure(figsize=(12, 6), dpi=120)
+    @cache_plot
+    def get_seasonal_decompose_plot(self, t_name, plot_name):
+        fig, ax = plt.subplots(1, 1, figsize=(12, 6), dpi=120)
         plt.title(f"{self.__dataset_dict[t_name]}", size=18)
         self.__fs[t_name].seasonal_decompose().plot()
-
-        img_buf = BytesIO()
-        plt.savefig(img_buf, format='png')
-        plt.close(fig) 
-        img_buf.seek(0)
-        return img_buf  
+        return fig
         
 #     def test(self):
 #         return self.__fs

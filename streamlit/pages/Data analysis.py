@@ -14,13 +14,13 @@ dataset_dict = {"CO2 amount": "co2",
                 }
 
 st.subheader("Head of dataset")
-res = rq.get(f'http://fastapi:8000/dfhead?dname={dataset_dict[dataset]}').json()
+res = rq.get(f'http://fastapi:8000/dfhead/{dataset_dict[dataset]}').json()
 st.dataframe(res)
 
 st.subheader("Plot the data")
-res = rq.get(f'http://fastapi:8000/main_plot?dname={dataset_dict[dataset]}')
+res = rq.get(f'http://fastapi:8000/main_plot/{dataset_dict[dataset]}')
 st.image(res.content)
 
 st.header("Seasonality, trand and residuals")
-res = rq.get(f'http://fastapi:8000/seasonal_decompose?dname={dataset_dict[dataset]}')
+res = rq.get(f'http://fastapi:8000/seasonal_decompose/{dataset_dict[dataset]}')
 st.image(res.content)
