@@ -2,6 +2,7 @@ import pandas as pd
 from pandas.plotting import autocorrelation_plot
 from pandas.plotting import lag_plot
 import numpy as np
+import seaborn as sns
 
 from sqlalchemy import create_engine, text
 import redis, json
@@ -23,11 +24,18 @@ class DataAnalysis:
     def __init__(self):
         self.__set_engine_n_redis()
         self.__set_forecasters()
-        self.__dataset_dict = {"co2": "CO2 amount", 
-                "air_passengers": "Air passengers",
-                "bitcoin": "Bitcoin exchange rate",
-                "bike": "Rented bike count"
+        self.__dataset_dict_title = {
+            "co2": "CO2 amount", 
+            "air_passengers": "Air passengers",
+            "bitcoin": "Bitcoin exchange rate",
+            "bike": "Rented bike count"
                 }
+        self.__column_dict = {
+            "co2": "co2", 
+            "air_passengers": "passengers",
+            "bitcoin": "close",
+            "bike": "count"
+        }
 
     def __get_environ(self):
         load_dotenv()
@@ -62,7 +70,7 @@ class DataAnalysis:
     
     def cache_plot(func):
         def wrapper(self, t_name, plot_name):
-            result = result = self.__redis.get(f'{t_name}-{plot_name}')
+            result = self.__redis.get(f'{t_name}-{plot_name}')
             if result is None:
                 fig = func(self, t_name, plot_name)
                 img_buf = BytesIO()
@@ -110,14 +118,60 @@ class DataAnalysis:
     def get_main_plot(self, t_name, plot_name):
         fig, ax = plt.subplots(1, 1, figsize=(10, 5), dpi=120)
         self.__fs[t_name].plot()
-        plt.title(f"{self.__dataset_dict[t_name]}", size=18)
+        plt.title(f"{self.__dataset_dict_title[t_name]}", size=18)
         return fig
     
     @cache_plot
     def get_seasonal_decompose_plot(self, t_name, plot_name):
         fig, ax = plt.subplots(1, 1, figsize=(12, 6), dpi=120)
-        plt.title(f"{self.__dataset_dict[t_name]}", size=18)
+        plt.title(f"{self.__dataset_dict_title[t_name]}", size=18)
         self.__fs[t_name].seasonal_decompose().plot()
+        return fig
+    
+    @cache_plot
+    def get_test_seasonality_plot(self, t_name, plot_name):
+        column = self.__column_dict[t_name]
+        data = self.__get_data(t_name).query(f'{column} > 0')
+        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 7))
+        ax1.set_title("Test for seasonality", fontsize=16)
+        autocorrelation_plot(data[column].tolist(), ax=ax1)
+
+        additive_decomposition = seasonal_decompose(data[column], model="multiplicative", period=12)
+        deseasonalized = data[column].values / additive_decomposition.seasonal
+
+        ax2.plot(deseasonalized)
+        ax2.set_title(f"{self.__dataset_dict_title[t_name]} Deseasonalized", fontsize=16)
+        return fig
+    
+    @cache_plot
+    def get_month_boxplots(self, t_name, plot_name):
+        data_with_month_number = self.__get_data(t_name).reset_index().assign(month_name = lambda x: x['date'].astype("datetime64[ns]").dt.strftime("%b"))
+        column = self.__column_dict[t_name]
+        fig, ax = plt.subplots(1, 1, figsize=(10, 5))
+        ax.set_xlabel("Months")
+        ax.set_ylabel(self.__dataset_dict_title[t_name])
+        ax.set_title(f"Boxplot of {self.__dataset_dict_title[t_name]}")
+        sns.boxplot(data=data_with_month_number[["month_name", column]], x='month_name', y =f"{column}", ax=ax, hue='month_name')
+        return fig
+
+    @cache_plot
+    def get_acf_pacf_plots(self, t_name, plot_name):
+        f = self.__get_forecaster(t_name, 12, 0.2)
+        fig, (ax1, ax2) = plt.subplots(2, 1,figsize=(9,9))
+        f.plot_acf(ax=ax1, title='ACF', lags=40, color='black')
+        f.plot_pacf(ax=ax2, title='PACF', lags=40, color='#B2C248', method='ywm')
+        return fig
+
+    @cache_plot
+    def get_lag_plots(self, t_name, plot_name):
+        column = self.__column_dict[t_name]
+        plt.rcParams.update({'ytick.left' : False, 'axes.titlepad':10})
+        fig, axes = plt.subplots(1, 4, figsize=(10,3), sharex=True, sharey=True, dpi=100)
+        data = self.__get_data(t_name)[column]
+        for i, ax in enumerate(axes.flatten()[:4]):
+            lag_plot(data, lag=i+1, ax=ax, c='firebrick')
+            ax.set_title('Lag ' + str(i+1))
+        fig.suptitle(f'Lag Plots of {self.__dataset_dict_title[t_name]}', y=1.05) 
         return fig
         
 #     def test(self):

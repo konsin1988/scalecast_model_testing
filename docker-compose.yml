@@ -10,13 +10,16 @@ services:
     volumes:
       - ./streamlit:/streamlit
     ports:
-            - 8513:8513
+      - 8513:8513
+    expose:
+      - 443 
     depends_on:
       fastapi:
         condition: service_healthy
         restart: true
     networks:
       - scalecast-network
+      - nginx-proxy
 
   fastapi:
     platform: linux/amd64
@@ -47,7 +50,7 @@ services:
       timeout: 10s
       retries: 3
     depends_on:
-      s3:
+      minio:
         condition: service_healthy
         restart: true
       db:
@@ -71,7 +74,7 @@ services:
     image: mlflow-base:latest
     container_name: scalecast-mlflow
     depends_on:
-      s3:
+      minio:
         condition: service_healthy
         restart: true
       db:
@@ -81,26 +84,27 @@ services:
         condition: service_completed_successfully
         restart: true
     ports:
-        - 5000:5000
+      - 5000:5000
     volumes:
-        - ./mlflow:/mlflow
+      - ./mlflow:/mlflow
     environment:
-        - MLFLOW_S3_ENDPOINT_URL=http://s3:9099/
-        - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
-        - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
-        - MLFLOW_TRACKING_USERNAME=${MLFLOW_TRACKING_USERNAME}
-        - MLFLOW_TRACKING_PASSWORD=${MLFLOW_TRACKING_PASSWORD}
-    command: mlflow server --backend-store-uri postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${MLFLOW_DB_NAME} --default-artifact-root s3://mlflow --serve-artifacts --host 0.0.0.0
+      - MLFLOW_S3_ENDPOINT_URL=http://minio:9099/
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD}
+      - MLFLOW_TRACKING_USERNAME=${MLFLOW_TRACKING_USERNAME}
+      - MLFLOW_TRACKING_PASSWORD=${MLFLOW_TRACKING_PASSWORD}
+    command: mlflow server --backend-store-uri postgresql://${DB_USER}:${DB_PASSWORD}@${DB_HOST}:${DB_PORT}/${MLFLOW_DB_NAME} --default-artifact-root minio://mlflow --serve-artifacts --host 0.0.0.0
     networks:
-        - scalecast-network
-        # --artifacts-destination s3://mlflow
+      - scalecast-network
+      - nginx-proxy
+        # --artifacts-destination minio://mlflow
 
-  s3:
+  minio:
     image: minio/minio:latest
-    container_name: scalecast-s3
+    container_name: scalecast-minio
     ports:
-      - "9000:9000"
-      - "9099:9099"
+      - 9000:9000
+      - 9099:9099
     environment:
       - MINIO_ROOT_USER=${MINIO_ROOT_USER}
       - MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}
@@ -115,6 +119,7 @@ services:
       retries: 3  
     networks:
     - scalecast-network
+    - nginx-proxy
 
   # db:
   #   image: clickhouse:latest
@@ -240,3 +245,6 @@ services:
 networks:
   scalecast-network:
     name: scalecast-network
+  nginx-proxy:
+    name: nginx-proxy
+    external: true

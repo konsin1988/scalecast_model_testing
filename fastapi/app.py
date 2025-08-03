@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Response
+from fastapi import FastAPI, Response, APIRouter
 import pandas as pd
 import os
 
@@ -7,19 +7,31 @@ from scripts.dataAnalysis import DataAnalysis
 
 analyser = DataAnalysis()
 app = FastAPI()
+plot = APIRouter()
 
 @app.get('/health')
 def heathcheck():
     return {"status": "healthy"}
 
-@app.get('/dfhead/{dname}')
-async def get_dfhead(dname: str | None = None):
-    return  analyser.get_dfhead(dname)
+@app.get('/dfhead/{t_name}')
+async def get_dfhead(t_name: str | None = None):
+    return  analyser.get_dfhead(t_name)
 
-@app.get('/main_plot/{dname}')
-async def get_main_plot(dname: str | None = None):
-    return Response(content=analyser.get_main_plot(dname, 'main'), media_type="image/png")
 
-@app.get('/seasonal_decompose/{dname}')
-async def get_seasonal_decompose_plot(dname: str | None = None):
-    return Response(content=analyser.get_seasonal_decompose_plot(dname, 'seasonal'), media_type="image/png")
+@plot.get('/{f_name}/{t_name}')
+async def get_main_plot(f_name: str, t_name: str | None = None):
+    match f_name:
+        case "main_plot":
+            return Response(content=analyser.get_main_plot(t_name, "main_plot"), media_type="image/png")
+        case 'seasonal_decompose': 
+            return Response(content=analyser.get_seasonal_decompose_plot(t_name, 'seasonal_decompose'), media_type="image/png")
+        case 'test_seasonality': 
+            return Response(content=analyser.get_test_seasonality_plot(t_name, 'test_seasonality'), media_type="image/png")
+        case 'month_boxplots': 
+            return Response(content=analyser.get_month_boxplots(t_name, 'month_boxplots'), media_type="image/png")
+        case 'acf_pacf': 
+            return Response(content=analyser.get_acf_pacf_plots(t_name, 'acf_pacf'), media_type="image/png")
+        case 'lag_plots': 
+            return Response(content=analyser.get_lag_plots(t_name, 'lag_plots'), media_type="image/png")
+
+app.include_router(plot, prefix='/plot')
