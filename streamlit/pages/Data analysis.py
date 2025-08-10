@@ -31,6 +31,11 @@ draw_plot("Boxplot of month distributions", "month_boxplots")
 draw_plot("ACF and PACF plots", "acf_pacf")
 draw_plot("Lag plots", "lag_plots")
 
+st.subheader("Stationarity. Augmented Dickey Fuller test (ADF Test)")
+res = rq.get(f'http://fastapi:8000/adf_test/{dataset_dict[dataset]}').json()['result']
+st.text(res)
+
+draw_plot("Detrend a time series", "detrended_plot")
 
 
 # st.subheader("Plot the data")

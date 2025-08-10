@@ -78,8 +78,6 @@ class DataAnalysis:
                 plt.close(fig)
                 self.__redis.set(f'{t_name}-{plot_name}', img_buf.getvalue())
                 result = img_buf.getvalue()
-            else:
-                result = self.__redis.get(f'{t_name}-{plot_name}')
             return result
         return wrapper
 
@@ -172,6 +170,28 @@ class DataAnalysis:
             lag_plot(data, lag=i+1, ax=ax, c='firebrick')
             ax.set_title('Lag ' + str(i+1))
         fig.suptitle(f'Lag Plots of {self.__dataset_dict_title[t_name]}', y=1.05) 
+        return fig
+    
+    def get_adf_test(self, t_name):
+        adf, pval, usedlag, nobs, crit_vals, icbest = self.__fs[t_name].adf_test(full_res=True)
+        crit_val_string = ''
+        for key, val in crit_vals.items():
+            crit_val_string += f'\n\t\t- {key}:\t\t\t\t {val}'
+        return {"result": f"""
+- ADF test statistic:            \t\t\t\t{adf}
+- ADF p-value:                   \t\t\t\t\t{pval}
+- Number of lags used:           \t\t\t{usedlag}
+- Number of observations:        \t\t\t{nobs}
+- Critical values: {crit_val_string}
+- Best information criterion:    \t\t\t{icbest}
+        """}
+    
+    @cache_plot
+    def get_detrended_plot(self, t_name, plot_name):
+        detrended = (self.__get_data(t_name)[self.__column_dict[t_name]].values - self.__fs[t_name].seasonal_decompose().trend)
+        fig, ax = plt.subplots(1, 1, figsize=(12, 6))
+        ax.plot(pd.DataFrame(detrended))
+        ax.set_title(f'{self.__dataset_dict_title[t_name]} detrended by subtracting the trend component', fontsize=16)
         return fig
         
 #     def test(self):
