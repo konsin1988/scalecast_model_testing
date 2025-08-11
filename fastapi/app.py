@@ -1,11 +1,10 @@
 from fastapi import FastAPI, Response, APIRouter
-import pandas as pd
-import os
-
 from scripts.dataAnalysis import DataAnalysis
+from scripts.linearModelsResearch import SKLearnModelsResearch
 
 
 analyser = DataAnalysis()
+sklearn_researcher = SKLearnModelsResearch()
 app = FastAPI()
 plot = APIRouter()
 
@@ -35,6 +34,8 @@ async def get_main_plot(f_name: str, t_name: str | None = None):
             return Response(content=analyser.get_lag_plots(t_name, 'lag_plots'), media_type="image/png")
         case 'detrended_plot':
             return Response(content=analyser.get_detrended_plot(t_name, 'detrended_plot'), media_type="image/png")
+        case 'lasso_test':
+            return Response(content=sklearn_researcher.lasso_test(t_name, 'detrended_plot'), media_type="image/png")
 
 
 @app.get('/adf_test/{t_name}')
@@ -42,3 +43,6 @@ async def get_adf_test(t_name: str | None = None):
     return analyser.get_adf_test(t_name)
 
 app.include_router(plot, prefix='/plot')
+
+if __name__ == "__main__":
+    app

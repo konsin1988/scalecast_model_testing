@@ -38,20 +38,3 @@ st.text(res)
 draw_plot("Detrend a time series", "detrended_plot")
 
 
-# st.subheader("Plot the data")
-# res = rq.get(f'http://fastapi:8000/main_plot/{dataset_dict[dataset]}')
-# st.image(res.content)
-
-# st.header("Seasonality, trand and residuals")
-# res = rq.get(f'http://fastapi:8000/seasonal_decompose/{dataset_dict[dataset]}')
-# st.image(res.content)
-
-# st.header("Test for seasonality. Deseasonalized plot")
-# res = rq.get(f'http://fastapi:8000/get_test_seasonality_plot/{dataset_dict[dataset]}')
-# st.image(res.content)
-
-# st.header("Boxplot of month distributions")
-# res = rq.get(f'http://fastapi:8000/get_month_boxplots/{dataset_dict[dataset]}')
-# st.image(res.content)
-
-

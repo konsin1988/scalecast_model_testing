@@ -1,0 +1,107 @@
+import pandas as pd
+import numpy as np
+from scalecast.Forecaster import Forecaster
+import matplotlib.pyplot as plt
+
+from sqlalchemy import create_engine, text
+import redis
+from dotenv import load_dotenv
+import os
+from io import StringIO, BytesIO
+
+
+
+class mainDataLoader:
+    def __init__(self):
+        self.__set_engine_n_redis()
+        self.__set_forecasters()
+        self._dataset_dict_title = {
+            "co2": "CO2 amount", 
+            "air_passengers": "Air passengers",
+            "bitcoin": "Bitcoin exchange rate",
+            "bike": "Rented bike count"
+                }
+        self._column_dict = {
+            "co2": "co2", 
+            "air_passengers": "passengers",
+            "bitcoin": "close",
+            "bike": "count"
+        }
+
+    def __get_environ(self):
+        load_dotenv()
+        return {"user": os.getenv("DB_USER"),
+                "password": os.getenv("DB_PASSWORD"),
+                "host": os.getenv("DB_HOST"),
+                "port": os.getenv("DB_PORT"),
+                "database": os.getenv("DB_NAME"),
+                "redis_user": os.getenv("REDIS_USER"),
+                "redis_password": os.getenv("REDIS_PASSWORD"),
+                "redis_host": os.getenv("REDIS_HOST"),
+                "redis_port": os.getenv("REDIS_PORT")
+                }
+
+    def __set_engine_n_redis(self):
+        EV = self.__get_environ()
+        self.__engine = create_engine(f"postgresql+psycopg2://{EV['user']}:{EV['password']}@{EV['host']}:{EV['port']}/{EV['database']}")
+        self.__redis = redis.from_url(f"redis://{EV['redis_user']}:{EV['redis_password']}@{EV['redis_host']}:{EV['redis_port']}/0")
+
+    def cache_df(func):
+        def wrapper(self, t_name):
+            res = self.__redis.get(t_name)
+            if res is None: 
+                res = func(self, t_name)
+                csv_buffer = StringIO()
+                res.to_csv(csv_buffer, index=False)
+                self.__redis.set(t_name, csv_buffer.getvalue())
+            else:
+                res = pd.read_csv(StringIO(res.decode('utf-8')))
+            return res
+        return wrapper
+
+    @cache_df
+    def _get_data(self, t_name):
+        query = text(f'select * from {t_name}')
+        return pd.read_sql_query(query, self.__engine)
+
+    def __get_forecaster(self, t_name, future_dates, test_length):
+        data = (
+            self._get_data(t_name)
+            .set_index('date')
+        )
+        f = Forecaster(
+            y = data.iloc[:,0],
+            current_dates=data.index,
+            future_dates=future_dates,
+            test_length=test_length,
+            cis=True,
+            # metrics = ['rmse','mae','mape','r2'],
+        )
+        f.add_time_trend()
+        f.add_seasonal_regressors('year', raw=False, sincos=True)
+        # f.auto_Xvar_select(cross_validate=True) # find best look-back, trend, and seasonality for your series
+
+        # Tell the Object to Evaluate Confidence Intervals
+        f.eval_cis(mode = True, cilevel = .95)
+        return f
+    
+    def __set_forecasters(self):
+        self._fs = {
+            "co2": self.__get_forecaster('co2', 12, 24),
+            "air_passengers": self.__get_forecaster("air_passengers", 12, 0.2),
+            "bitcoin": self.__get_forecaster("bitcoin", 12, 0.2),
+            "bike": self.__get_forecaster("bike", 12, 0.2)
+        }
+
+    def cache_plot(func):
+        def wrapper(self, t_name, plot_name):
+            result = self.__redis.get(f'{t_name}-{plot_name}')
+            if result is None:
+                fig = func(self, t_name, plot_name)
+                img_buf = BytesIO()
+                plt.savefig(img_buf, format='png')
+                plt.close(fig)
+                self.__redis.set(f'{t_name}-{plot_name}', img_buf.getvalue())
+                result = img_buf.getvalue()
+            return result
+        return wrapper
